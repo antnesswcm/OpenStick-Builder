@@ -129,19 +129,19 @@ cp configs/extlinux.conf ${CHROOT}/boot/extlinux
 cp dtbs/* ${CHROOT}/boot/dtbs/qcom
 
 # copy WCNSS firmware and NV calibration (SP970)
-# These are proprietary blobs extracted from stock firmware, not included in
-# the postmarketOS kernel package. Source: prebuilt/<board>/firmware/
-if [ -d prebuilt/sp970/firmware ]; then
+# Proprietary blobs committed to firmware/<board>/ for self-contained build.
+# Source: stock firmware (NON-HLOS.bin + persist partition).
+if [ -d firmware/sp970 ]; then
     mkdir -p ${CHROOT}/lib/firmware/wlan/prima
-    for f in prebuilt/sp970/firmware/WCNSS.B* prebuilt/sp970/firmware/WCNSS.MDT; do
+    for f in firmware/sp970/WCNSS.B* firmware/sp970/WCNSS.MDT; do
         [ -e "$f" ] || continue
         # lower-case filename (wcnss.b00 ... wcnss.mdt) as expected by wcnss-pil
         name=$(basename "$f" | tr 'A-Z' 'a-z')
         cp "$f" ${CHROOT}/lib/firmware/$name
     done
     # NV calibration -> /lib/firmware/wlan/prima/
-    [ -e prebuilt/sp970/firmware/WCNSS_qcom_wlan_nv.bin ] && \
-        cp prebuilt/sp970/firmware/WCNSS_qcom_wlan_nv.bin ${CHROOT}/lib/firmware/wlan/prima/
+    [ -e firmware/sp970/WCNSS_qcom_wlan_nv.bin ] && \
+        cp firmware/sp970/WCNSS_qcom_wlan_nv.bin ${CHROOT}/lib/firmware/wlan/prima/
 fi
 
 # update fstab

@@ -10,5 +10,5 @@ mnt
 rootfs
 apk.static
 
-# prebuilt firmware blobs (proprietary, not tracked in git)
+# prebuilt directory for manual firmware (legacy, not used anymore)
 prebuilt/
