@@ -12,3 +12,6 @@ apk.static
 
 # prebuilt directory for manual firmware (legacy, not used anymore)
 prebuilt/
+
+# keep committed firmware blobs (exception to *.bin above)
+!firmware/
