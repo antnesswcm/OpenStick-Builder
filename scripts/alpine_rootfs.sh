@@ -128,6 +128,22 @@ cp configs/extlinux.conf ${CHROOT}/boot/extlinux
 # copy custom dtb's
 cp dtbs/* ${CHROOT}/boot/dtbs/qcom
 
+# copy WCNSS firmware and NV calibration (SP970)
+# These are proprietary blobs extracted from stock firmware, not included in
+# the postmarketOS kernel package. Source: prebuilt/<board>/firmware/
+if [ -d prebuilt/sp970/firmware ]; then
+    mkdir -p ${CHROOT}/lib/firmware/wlan/prima
+    for f in prebuilt/sp970/firmware/WCNSS.B* prebuilt/sp970/firmware/WCNSS.MDT; do
+        [ -e "$f" ] || continue
+        # lower-case filename (wcnss.b00 ... wcnss.mdt) as expected by wcnss-pil
+        name=$(basename "$f" | tr 'A-Z' 'a-z')
+        cp "$f" ${CHROOT}/lib/firmware/$name
+    done
+    # NV calibration -> /lib/firmware/wlan/prima/
+    [ -e prebuilt/sp970/firmware/WCNSS_qcom_wlan_nv.bin ] && \
+        cp prebuilt/sp970/firmware/WCNSS_qcom_wlan_nv.bin ${CHROOT}/lib/firmware/wlan/prima/
+fi
+
 # update fstab
 echo "/dev/mmcblk0p14\t/boot\text2\tdefaults\t0 2" >> ${CHROOT}/etc/fstab
 

@@ -9,3 +9,6 @@ files
 mnt
 rootfs
 apk.static
+
+# prebuilt firmware blobs (proprietary, not tracked in git)
+prebuilt/
