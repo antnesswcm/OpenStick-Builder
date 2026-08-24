@@ -21,6 +21,9 @@ tar xpf alpine_rootfs.tgz -C mnt --exclude='./boot/*' --exclude='./root/*' --exc
 
 umount mnt
 
-# create sparse android images 
+# shrink rootfs to minimum size (1.5GB -> ~200MB) for fast flashing
+resize2fs -M rootfs.raw
+
+# create sparse android images
 img2simg rootfs.raw files/alpine_rootfs.bin
 img2simg boot.raw files/boot.bin

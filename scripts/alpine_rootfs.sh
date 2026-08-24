@@ -98,6 +98,32 @@ rc-update add modemmanager default
 rc-update add networkmanager default
 rc-update add networkmanager-dispatcher default
 rc-update add wpa_supplicant default
+rc-update add local default
+
+# first-boot: expand rootfs to fill the partition (rootfs is shrunk with resize2fs -M)
+mkdir -p ${CHROOT}/etc/local.d
+cat > ${CHROOT}/etc/local.d/expand-rootfs.start << 'LOCALEOF'
+#!/bin/sh
+# expand rootfs to fill partition on first boot
+ROOTFS_DEV=$(findmnt -n -o SOURCE / | sed 's|/[0-9]*$||')
+if [ -b "$ROOTFS_DEV" ] && [ ! -f /var/lib/.rootfs-expanded ]; then
+    resize2fs "$ROOTFS_DEV" 2>/dev/null
+    touch /var/lib/.rootfs-expanded
+fi
+LOCALEOF
+chmod +x ${CHROOT}/etc/local.d/expand-rootfs.start
+
+# ModemManager stabilization: wait for QMI port, trigger udev settle, restart MM.
+# Without this, MM often starts before wwan0qmi0 is ready -> "No modems found".
+cat > ${CHROOT}/etc/local.d/mm-init.start << 'LOCALEOF'
+#!/bin/sh
+# stabilize ModemManager: QMI port may not be ready when MM starts at boot
+sleep 10
+udevadm trigger 2>/dev/null
+udevadm settle 2>/dev/null
+rc-service modemmanager restart 2>/dev/null
+LOCALEOF
+chmod +x ${CHROOT}/etc/local.d/mm-init.start
 "
 echo 'user ALL=(ALL:ALL) NOPASSWD: ALL' > ${CHROOT}/etc/sudoers.d/user
 
