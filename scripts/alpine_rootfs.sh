@@ -208,11 +208,21 @@ cp -a configs/templates ${CHROOT}/etc/gt
 cp scripts/setup_ncm_gadget.sh ${CHROOT}/usr/local/bin
 
 # write firmware version identifier for quick boot-time identification
-# generates /etc/openstick-version, e.g. "2026-08-25 c80fee2" (SP970-future)
-FIRMWARE_VERSION="$(git -C "$(dirname "$0")/.." rev-parse --short HEAD 2>/dev/null || echo unknown)"
+# /etc/openstick-version: "v4.0.0 (2026-08-25, commit ff25894c1a2b...)"  [full hash for exact verification]
+# /etc/openstick-changelog.md: 随固件打包的变更日志
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+FIRMWARE_VERSION="$(cat "${REPO_ROOT}/VERSION" 2>/dev/null || echo 0.0.0)"
+FIRMWARE_HASH="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
+FIRMWARE_HASH_SHORT="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 FIRMWARE_DATE="$(date +%Y-%m-%d)"
-echo "${FIRMWARE_DATE} ${FIRMWARE_VERSION}" > ${CHROOT}/etc/openstick-version
+echo "v${FIRMWARE_VERSION} (${FIRMWARE_DATE}, commit ${FIRMWARE_HASH_SHORT} ${FIRMWARE_HASH})" \
+    > ${CHROOT}/etc/openstick-version
 chmod 644 ${CHROOT}/etc/openstick-version
+# include changelog in firmware (if present in repo)
+if [ -f "${REPO_ROOT}/CHANGELOG.md" ]; then
+    cp "${REPO_ROOT}/CHANGELOG.md" ${CHROOT}/etc/openstick-changelog.md
+    chmod 644 ${CHROOT}/etc/openstick-changelog.md
+fi
 
 # backup rootfs
 rm -f alpine_rootfs.tgz
