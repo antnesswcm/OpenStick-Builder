@@ -144,6 +144,17 @@ if [ -d firmware/sp970 ]; then
         cp firmware/sp970/WCNSS_qcom_wlan_nv.bin ${CHROOT}/lib/firmware/wlan/prima/
 fi
 
+# copy modem firmware (SP970) to /lib/firmware/
+# mss-pil loads mba.mbn, then modem.mdt (with modem.bXX segments).
+# Without these the modem remoteproc stays offline (Boot failed: -2).
+if [ -d firmware/modem/sp970 ]; then
+    mkdir -p ${CHROOT}/lib/firmware
+    cp firmware/modem/sp970/mba.mbn ${CHROOT}/lib/firmware/
+    cp firmware/modem/sp970/modem.mbn ${CHROOT}/lib/firmware/
+    cp firmware/modem/sp970/modem.mdt ${CHROOT}/lib/firmware/
+    cp firmware/modem/sp970/modem.b* ${CHROOT}/lib/firmware/
+fi
+
 # update fstab
 echo "/dev/mmcblk0p14\t/boot\text2\tdefaults\t0 2" >> ${CHROOT}/etc/fstab
 
