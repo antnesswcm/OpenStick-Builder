@@ -15,3 +15,4 @@ prebuilt/
 
 # keep committed firmware blobs (exception to *.bin above)
 !firmware/
+!firmware/modem/sp970/*.mbn
