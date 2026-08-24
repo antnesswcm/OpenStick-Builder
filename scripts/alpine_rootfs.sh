@@ -207,6 +207,13 @@ echo "/dev/mmcblk0p14\t/boot\text2\tdefaults\t0 2" >> ${CHROOT}/etc/fstab
 cp -a configs/templates ${CHROOT}/etc/gt
 cp scripts/setup_ncm_gadget.sh ${CHROOT}/usr/local/bin
 
+# write firmware version identifier for quick boot-time identification
+# generates /etc/openstick-version, e.g. "2026-08-25 c80fee2" (SP970-future)
+FIRMWARE_VERSION="$(git -C "$(dirname "$0")/.." rev-parse --short HEAD 2>/dev/null || echo unknown)"
+FIRMWARE_DATE="$(date +%Y-%m-%d)"
+echo "${FIRMWARE_DATE} ${FIRMWARE_VERSION}" > ${CHROOT}/etc/openstick-version
+chmod 644 ${CHROOT}/etc/openstick-version
+
 # backup rootfs
 rm -f alpine_rootfs.tgz
 tar cpzf alpine_rootfs.tgz \
