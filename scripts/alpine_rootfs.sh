@@ -40,6 +40,7 @@ apk add \
     linux-postmarketos-qcom-msm8916@pmos \
     modemmanager \
     msm-firmware-loader@pmos \
+    qmi-utils \
     openrc \
     rmtfs \
     shadow \
@@ -124,6 +125,24 @@ udevadm settle 2>/dev/null
 rc-service modemmanager restart 2>/dev/null
 LOCALEOF
 chmod +x ${CHROOT}/etc/local.d/mm-init.start
+
+# SIM activation: provision USIM application so the physical SIM registers.
+# Android RIL does this via QMI UIM; mainline MM alone cannot (Get Slot Status NotSupported).
+# Steps: stop MM (free QMI port), activate provisioning session, start MM.
+# USIM AID A000000087... is the standard USIM AID (verified on China Telecom card).
+cat > ${CHROOT}/etc/local.d/sim-activate.start << 'LOCALEOF'
+#!/bin/sh
+# activate SIM provisioning (physical SIM in slot 1, USIM application)
+sleep 20
+rc-service modemmanager stop 2>/dev/null
+sleep 3
+qmicli -d /dev/wwan0qmi0 \
+  --uim-change-provisioning-session="session-type=primary-gw-provisioning,activate=yes,slot=1,aid=A0000000871002FF86FF0389FFFFFFFF" \
+  2>/dev/null
+sleep 3
+rc-service modemmanager start 2>/dev/null
+LOCALEOF
+chmod +x ${CHROOT}/etc/local.d/sim-activate.start
 "
 echo 'user ALL=(ALL:ALL) NOPASSWD: ALL' > ${CHROOT}/etc/sudoers.d/user
 
