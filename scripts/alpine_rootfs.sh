@@ -148,8 +148,9 @@ while [ ! -e /dev/wwan0qmi0 ] && [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done
 [ -e /dev/wwan0qmi0 ] || exit 1
 
 # 2. discover USIM AID from card (auto, any operator)
+# NOTE: busybox awk breaks on `{f=1;next}`; use plain `/usim/{f=1}` flag instead.
 AID=$($QMI -d /dev/wwan0qmi0 --uim-get-card-status 2>/dev/null | \
-      awk '/Application type: .usim/{f=1;next} f&&/Application ID:/{getline;gsub(/[^0-9A-Fa-f]/,"");print toupper($0);exit}')
+      awk '/usim/{f=1} f&&/Application ID:/{getline; gsub(/[^0-9A-Fa-f]/,""); print; exit}')
 [ -n "$AID" ] || { echo "sim-activate: USIM AID discovery failed"; exit 1; }
 
 # 3. provision until USIM ready (up to 5 passes)
