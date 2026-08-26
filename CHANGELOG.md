@@ -16,6 +16,7 @@
 - 固件来源：`analysis/OpenStick-Builder-fork/` 的 `sp970-future` 分支
 - 依赖：modemmanager + qmi-utils + msm-firmware-loader，modem/WCNSS 固件内置 rootfs
 - **刷机 SOP**：禁刷 `partition(GPT)`——实测会清空 modemst(NV)（IMEI 丢失→factory-test 无法上网）。刷 boot/rootfs 即可保留 NV。
+- **rootfs 构建分模式**：debug（默认，`resize2fs -M` 收缩 ~200MB 快刷）/ release（workflow 勾选 release 或 `FULL_ROOTFS=1`，满分区 ~3.47GB）。**删除开机扩容脚本**（挂载中的 rootfs 无法 resize2fs，原 expand-rootfs 是无效 no-op）。
 
 ### 修复
 - modem 固件缺失导致 remoteproc 加载失败（上传后正常）

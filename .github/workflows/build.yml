@@ -2,6 +2,11 @@ name: Build
 
 on:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Release build: full-size rootfs (no shrink). Unchecked = debug (shrunk, fast flash)"
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -26,6 +31,8 @@ jobs:
 
       - name: Create images
         run: sudo sh -e scripts/build_images.sh
+        env:
+          FULL_ROOTFS: ${{ github.event.inputs.release == 'true' && '1' || '0' }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

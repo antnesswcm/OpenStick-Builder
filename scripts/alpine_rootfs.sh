@@ -117,19 +117,11 @@ rc-update add local default
 # inside a double-quoted chroot block, shell would expand $VAR / $(...) in the
 # heredocs and corrupt the scripts. Using ${CHROOT} paths directly avoids that.
 
-# first-boot: expand rootfs to fill the partition (rootfs is shrunk with resize2fs -M)
+# NOTE: no expand-rootfs.start any more. Resizing a mounted rootfs at boot can
+# never succeed (resize2fs: Can't open blockdev) and was a no-op. Rootfs sizing
+# is done at build time instead: debug = shrunk (build_images.sh resize2fs -M),
+# release = full partition (FULL_ROOTFS=1).
 mkdir -p ${CHROOT}/etc/local.d
-cat > ${CHROOT}/etc/local.d/expand-rootfs.start << 'LOCALEOF'
-#!/bin/sh
-# expand rootfs to fill partition on first boot
-# NOTE: util-linux findmnt is NOT installed on this image; parse /proc/mounts instead.
-ROOTFS_DEV=$(awk '$2 == "/" { print $1; exit }' /proc/mounts)
-if [ -b "$ROOTFS_DEV" ] && [ ! -f /var/lib/.rootfs-expanded ]; then
-    resize2fs "$ROOTFS_DEV" 2>/dev/null
-    touch /var/lib/.rootfs-expanded
-fi
-LOCALEOF
-chmod +x ${CHROOT}/etc/local.d/expand-rootfs.start
 
 # SIM activation (Plan B) + modem bring-up + NAT.
 # Root cause: N958St modem UIM Get Slot Status returns NotSupported, so MM at
