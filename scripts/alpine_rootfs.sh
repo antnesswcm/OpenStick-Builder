@@ -105,6 +105,12 @@ rc-update add networkmanager default
 rc-update add networkmanager-dispatcher default
 rc-update add wpa_supplicant default
 rc-update add local default
+"
+
+# ===== Everything below runs on the build host (outside the chroot) =====
+# The local.d scripts and D-Bus edits MUST be outside the chroot "..." block:
+# inside a double-quoted chroot block, shell would expand $VAR / $(...) in the
+# heredocs and corrupt the scripts. Using ${CHROOT} paths directly avoids that.
 
 # first-boot: expand rootfs to fill the partition (rootfs is shrunk with resize2fs -M)
 mkdir -p ${CHROOT}/etc/local.d
@@ -193,7 +199,7 @@ iptables -t nat -C POSTROUTING -o wwan0 -j MASQUERADE 2>/dev/null || \
     iptables -t nat -A POSTROUTING -o wwan0 -j MASQUERADE
 LOCALEOF
 chmod +x ${CHROOT}/etc/local.d/nat.start
-"
+
 echo 'user ALL=(ALL:ALL) NOPASSWD: ALL' > ${CHROOT}/etc/sudoers.d/user
 
 # add udev rules
