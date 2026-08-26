@@ -117,7 +117,8 @@ mkdir -p ${CHROOT}/etc/local.d
 cat > ${CHROOT}/etc/local.d/expand-rootfs.start << 'LOCALEOF'
 #!/bin/sh
 # expand rootfs to fill partition on first boot
-ROOTFS_DEV=$(findmnt -n -o SOURCE / | sed 's|/[0-9]*$||')
+# NOTE: util-linux findmnt is NOT installed on this image; parse /proc/mounts instead.
+ROOTFS_DEV=$(awk '$2 == "/" { print $1; exit }' /proc/mounts)
 if [ -b "$ROOTFS_DEV" ] && [ ! -f /var/lib/.rootfs-expanded ]; then
     resize2fs "$ROOTFS_DEV" 2>/dev/null
     touch /var/lib/.rootfs-expanded
@@ -139,16 +140,22 @@ cat > ${CHROOT}/etc/local.d/sim-activate.start << 'LOCALEOF'
 #!/bin/sh
 # SP970 v4: auto SIM activation (Plan B) + bring up MM + NAT
 LOG=/var/log/sim-activate.log
-# NOTE: qmicli needs root to open /dev/wwan0qmi0; local.d runs as root at boot,
-# but keep sudo -n so manual runs as user work too.
-QMI="sudo -n $(command -v qmicli || echo /tmp/qmicli)"
+echo "[$(date)] === sim-activate start ===" >> $LOG
+QMI_BIN="$(command -v qmicli || echo /tmp/qmicli)"
+# qmicli needs root to open /dev/wwan0qmi0: use directly as root, else sudo.
+if [ "$(id -u)" = "0" ]; then QMI="$QMI_BIN"; else QMI="sudo -n $QMI_BIN"; fi
 
 # 1. udev settle + wait for QMI control port
 udevadm trigger 2>/dev/null
 udevadm settle 2>/dev/null
 i=0
 while [ ! -e /dev/wwan0qmi0 ] && [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done
-[ -e /dev/wwan0qmi0 ] || { echo "[$(date)] no QMI port" >> $LOG; exit 1; }
+if [ -e /dev/wwan0qmi0 ]; then
+    echo "[$(date)] QMI port ready (waited ${i}s)" >> $LOG
+else
+    echo "[$(date)] FAIL: no QMI port after 60s" >> $LOG
+    exit 1
+fi
 
 # 2. discover USIM AID from card (retry up to 90s while USIM initializes at boot)
 # NOTE: busybox awk breaks on `{f=1;next}`; use plain `/usim/{f=1}` flag instead.
@@ -159,7 +166,12 @@ while [ $i -lt 18 ]; do
     [ -n "$AID" ] && break
     sleep 5; i=$((i+1))
 done
-[ -n "$AID" ] || { echo "[$(date)] USIM AID discovery failed" >> $LOG; exit 1; }
+if [ -n "$AID" ]; then
+    echo "[$(date)] AID=$AID (after ${i} tries)" >> $LOG
+else
+    echo "[$(date)] FAIL: USIM AID discovery failed (90s)" >> $LOG
+    exit 1
+fi
 
 # 3. provision until USIM ready (up to 5 passes)
 for i in 1 2 3 4 5; do
@@ -170,9 +182,11 @@ for i in 1 2 3 4 5; do
     READY=$($QMI -d /dev/wwan0qmi0 --uim-get-card-status 2>/dev/null | grep -c "Application state: 'ready'")
     [ "$READY" -ge 1 ] && break
 done
+echo "[$(date)] provision done, USIM ready on pass $i" >> $LOG
 
 # 4. enable RF
 printf 'AT+CFUN=1\r' | timeout 8 microcom -t 6000 /dev/wwan0at0 >/dev/null 2>&1
+echo "[$(date)] CFUN=1 sent" >> $LOG
 sleep 5
 
 # 5. push registration (repeat provision once)
@@ -187,9 +201,11 @@ while [ $i -lt 12 ]; do
     [ "$REG" -ge 1 ] && break
     sleep 5; i=$((i+1))
 done
+echo "[$(date)] registration wait done (${i} iters, reg=${REG:-0})" >> $LOG
 
 # 7. start MM -> auto-connect + configure IP/route/DNS
 rc-service modemmanager start 2>/dev/null
+echo "[$(date)] === sim-activate end (MM started) ===" >> $LOG
 LOCALEOF
 chmod +x ${CHROOT}/etc/local.d/sim-activate.start
 
