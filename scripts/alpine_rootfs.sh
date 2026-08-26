@@ -138,20 +138,28 @@ chmod +x ${CHROOT}/etc/local.d/expand-rootfs.start
 cat > ${CHROOT}/etc/local.d/sim-activate.start << 'LOCALEOF'
 #!/bin/sh
 # SP970 v4: auto SIM activation (Plan B) + bring up MM + NAT
-QMI="$(command -v qmicli || echo /tmp/qmicli)"
+LOG=/var/log/sim-activate.log
+# NOTE: qmicli needs root to open /dev/wwan0qmi0; local.d runs as root at boot,
+# but keep sudo -n so manual runs as user work too.
+QMI="sudo -n $(command -v qmicli || echo /tmp/qmicli)"
 
 # 1. udev settle + wait for QMI control port
 udevadm trigger 2>/dev/null
 udevadm settle 2>/dev/null
 i=0
 while [ ! -e /dev/wwan0qmi0 ] && [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done
-[ -e /dev/wwan0qmi0 ] || exit 1
+[ -e /dev/wwan0qmi0 ] || { echo "[$(date)] no QMI port" >> $LOG; exit 1; }
 
-# 2. discover USIM AID from card (auto, any operator)
+# 2. discover USIM AID from card (retry up to 90s while USIM initializes at boot)
 # NOTE: busybox awk breaks on `{f=1;next}`; use plain `/usim/{f=1}` flag instead.
-AID=$($QMI -d /dev/wwan0qmi0 --uim-get-card-status 2>/dev/null | \
-      awk '/usim/{f=1} f&&/Application ID:/{getline; gsub(/[^0-9A-Fa-f]/,""); print; exit}')
-[ -n "$AID" ] || { echo "sim-activate: USIM AID discovery failed"; exit 1; }
+i=0
+while [ $i -lt 18 ]; do
+    AID=$($QMI -d /dev/wwan0qmi0 --uim-get-card-status 2>/dev/null | \
+          awk '/usim/{f=1} f&&/Application ID:/{getline; gsub(/[^0-9A-Fa-f]/,""); print; exit}')
+    [ -n "$AID" ] && break
+    sleep 5; i=$((i+1))
+done
+[ -n "$AID" ] || { echo "[$(date)] USIM AID discovery failed" >> $LOG; exit 1; }
 
 # 3. provision until USIM ready (up to 5 passes)
 for i in 1 2 3 4 5; do
