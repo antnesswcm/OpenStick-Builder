@@ -22,7 +22,20 @@ cp /etc/resolv.conf ${CHROOT}/etc/
 mkdir -p ${CHROOT}/usr/bin
 cp $(which qemu-aarch64-static) ${CHROOT}/usr/bin
 
-[ -e apk.static ] || wget ${APK_STATIC_URL}; chmod a+x apk.static
+# apk.static from gitlab.alpinelinux.org is flaky from GitHub runners; retry.
+if [ ! -e apk.static ]; then
+    i=0
+    until wget -O apk.static ${APK_STATIC_URL} 2>/dev/null && [ -s apk.static ]; do
+        i=$((i+1))
+        if [ $i -ge 3 ]; then
+            echo "APK_STATIC download failed after 3 tries: ${APK_STATIC_URL}" >&2
+            exit 1
+        fi
+        echo "apk.static retry $i/3..." >&2
+        sleep 15
+    done
+fi
+chmod a+x apk.static
 
 ./apk.static add -p ${CHROOT} --initdb -U --arch aarch64 --allow-untrusted alpine-base
 
