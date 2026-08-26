@@ -204,8 +204,24 @@ done
 echo "[$(date)] registration wait done (${i} iters, reg=${REG:-0})" >> $LOG
 
 # 7. start MM -> auto-connect + configure IP/route/DNS
-rc-service modemmanager start 2>/dev/null
-echo "[$(date)] === sim-activate end (MM started) ===" >> $LOG
+# At boot the MM daemon dependency (dbus/polkit) may not be ready yet, and
+# rc-service start can return while MM is not actually running. Retry until
+# the ModemManager process is really up (max ~60s).
+i=0
+while [ $i -lt 12 ]; do
+    rc-service modemmanager start 2>/dev/null
+    sleep 5
+    if pgrep -f "usr/sbin/ModemManager" >/dev/null 2>&1; then
+        echo "[$(date)] MM running after retry $i" >> $LOG
+        break
+    fi
+    i=$((i+1))
+done
+if pgrep -f "usr/sbin/ModemManager" >/dev/null 2>&1; then
+    echo "[$(date)] === sim-activate end (MM up) ===" >> $LOG
+else
+    echo "[$(date)] WARN: MM still not running after retries" >> $LOG
+fi
 LOCALEOF
 chmod +x ${CHROOT}/etc/local.d/sim-activate.start
 
