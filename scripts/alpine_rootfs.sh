@@ -95,7 +95,12 @@ rc-update add killprocs shutdown
 rc-update add savecache shutdown
 rc-update add dropbear default
 rc-update add rmtfs default
-rc-update add modemmanager default
+# NOTE: ModemManager is intentionally NOT added to boot (Plan B).
+# - MM at boot mis-detects sim-missing (N958St Get Slot Status NotSupported) and
+#   power-offs the modem. We let the modem boot unmanaged, activate the SIM via
+#   qmicli (sim-activate.start), then start MM once the SIM is registered.
+# - D-Bus activation is disabled too (see below), else NetworkManager probing
+#   would auto-launch MM via org.freedesktop.ModemManager1.service.
 rc-update add networkmanager default
 rc-update add networkmanager-dispatcher default
 rc-update add wpa_supplicant default
@@ -114,35 +119,80 @@ fi
 LOCALEOF
 chmod +x ${CHROOT}/etc/local.d/expand-rootfs.start
 
-# ModemManager stabilization: wait for QMI port, trigger udev settle, restart MM.
-# Without this, MM often starts before wwan0qmi0 is ready -> "No modems found".
-cat > ${CHROOT}/etc/local.d/mm-init.start << 'LOCALEOF'
-#!/bin/sh
-# stabilize ModemManager: QMI port may not be ready when MM starts at boot
-sleep 10
-udevadm trigger 2>/dev/null
-udevadm settle 2>/dev/null
-rc-service modemmanager restart 2>/dev/null
-LOCALEOF
-chmod +x ${CHROOT}/etc/local.d/mm-init.start
-
-# SIM activation: provision USIM application so the physical SIM registers.
-# Android RIL does this via QMI UIM; mainline MM alone cannot (Get Slot Status NotSupported).
-# Steps: stop MM (free QMI port), activate provisioning session, start MM.
-# USIM AID A000000087... is the standard USIM AID (verified on China Telecom card).
+# SIM activation (Plan B) + modem bring-up + NAT.
+# Root cause: N958St modem UIM Get Slot Status returns NotSupported, so MM at
+# boot always mis-reports "sim-missing" and power-offs the modem. Instead:
+#   - MM is NOT auto-started and its D-Bus activation is disabled, so it never
+#     touches the modem during boot;
+#   - this script: waits for the QMI port, discovers the USIM AID from the card
+#     (works for ANY operator SIM), provisions it until ready, enables RF
+#     (CFUN=1), pushes registration, then starts MM.
+# After MM starts, ModemManager + NetworkManager auto-create the data bearer and
+# configure IP/route/DNS (verified). No manual IP config needed.
 cat > ${CHROOT}/etc/local.d/sim-activate.start << 'LOCALEOF'
 #!/bin/sh
-# activate SIM provisioning (physical SIM in slot 1, USIM application)
-sleep 20
-rc-service modemmanager stop 2>/dev/null
-sleep 3
-qmicli -d /dev/wwan0qmi0 \
-  --uim-change-provisioning-session="session-type=primary-gw-provisioning,activate=yes,slot=1,aid=A0000000871002FF86FF0389FFFFFFFF" \
-  2>/dev/null
-sleep 3
+# SP970 v4: auto SIM activation (Plan B) + bring up MM + NAT
+QMI="$(command -v qmicli || echo /tmp/qmicli)"
+
+# 1. udev settle + wait for QMI control port
+udevadm trigger 2>/dev/null
+udevadm settle 2>/dev/null
+i=0
+while [ ! -e /dev/wwan0qmi0 ] && [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done
+[ -e /dev/wwan0qmi0 ] || exit 1
+
+# 2. discover USIM AID from card (auto, any operator)
+AID=$($QMI -d /dev/wwan0qmi0 --uim-get-card-status 2>/dev/null | \
+      awk '/Application type: .usim/{f=1;next} f&&/Application ID:/{getline;gsub(/[^0-9A-Fa-f]/,"");print toupper($0);exit}')
+[ -n "$AID" ] || { echo "sim-activate: USIM AID discovery failed"; exit 1; }
+
+# 3. provision until USIM ready (up to 5 passes)
+for i in 1 2 3 4 5; do
+    $QMI -d /dev/wwan0qmi0 \
+      --uim-change-provisioning-session="session-type=primary-gw-provisioning,activate=yes,slot=1,aid=$AID" \
+      >/dev/null 2>&1
+    sleep 5
+    READY=$($QMI -d /dev/wwan0qmi0 --uim-get-card-status 2>/dev/null | grep -c "Application state: 'ready'")
+    [ "$READY" -ge 1 ] && break
+done
+
+# 4. enable RF
+printf 'AT+CFUN=1\r' | timeout 8 microcom -t 6000 /dev/wwan0at0 >/dev/null 2>&1
+sleep 5
+
+# 5. push registration (repeat provision once)
+$QMI -d /dev/wwan0qmi0 \
+  --uim-change-provisioning-session="session-type=primary-gw-provisioning,activate=yes,slot=1,aid=$AID" \
+  >/dev/null 2>&1
+
+# 6. wait for network registration (max ~60s)
+i=0
+while [ $i -lt 12 ]; do
+    REG=$($QMI -d /dev/wwan0qmi0 --nas-get-serving-system 2>/dev/null | grep -c "Registration state: 'registered'")
+    [ "$REG" -ge 1 ] && break
+    sleep 5; i=$((i+1))
+done
+
+# 7. start MM -> auto-connect + configure IP/route/DNS
 rc-service modemmanager start 2>/dev/null
 LOCALEOF
 chmod +x ${CHROOT}/etc/local.d/sim-activate.start
+
+# Disable MM D-Bus activation: without this, NetworkManager probing the
+# org.freedesktop.ModemManager1 name would auto-launch MM even though it is not
+# in the boot runlevel, re-introducing the sim-missing power-off problem.
+sed -i 's|Exec=/usr/sbin/ModemManager|Exec=/bin/false|' \
+    ${CHROOT}/usr/share/dbus-1/system-services/org.freedesktop.ModemManager1.service 2>/dev/null || true
+
+# WiFi(192.168.4.x) -> 4G(wwan0) NAT forwarding
+cat > ${CHROOT}/etc/local.d/nat.start << 'LOCALEOF'
+#!/bin/sh
+# WiFi client -> 4G NAT (runs after sim-activate brings up wwan0)
+echo 1 > /proc/sys/net/ipv4/ip_forward
+iptables -t nat -C POSTROUTING -o wwan0 -j MASQUERADE 2>/dev/null || \
+    iptables -t nat -A POSTROUTING -o wwan0 -j MASQUERADE
+LOCALEOF
+chmod +x ${CHROOT}/etc/local.d/nat.start
 "
 echo 'user ALL=(ALL:ALL) NOPASSWD: ALL' > ${CHROOT}/etc/sudoers.d/user
 
