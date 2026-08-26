@@ -203,15 +203,27 @@ while [ $i -lt 12 ]; do
 done
 echo "[$(date)] registration wait done (${i} iters, reg=${REG:-0})" >> $LOG
 
-# 7. start MM -> auto-connect + configure IP/route/DNS
-# Plan A: /etc/init.d/local declares `after dbus polkit`, so this local.d
-# script runs after dbus/polkit are up and MM starts cleanly in one shot.
-rc-service modemmanager start 2>/dev/null
-sleep 5
-if pgrep -f "usr/sbin/ModemManager" >/dev/null 2>&1; then
-    echo "[$(date)] === sim-activate end (MM up) ===" >> $LOG
-else
-    echo "[$(date)] WARN: MM not up after one start" >> $LOG
+# 7. start MM once -> wait until a modem is actually visible, log real errors.
+# (One rc-service call only; then poll mmcli - the modem appearing is the real
+#  success signal. All rc-service output is logged for boot diagnostics.)
+echo "[$(date)] mm-start: rc-service modemmanager start" >> $LOG
+MM_OUT=$(rc-service modemmanager start 2>&1)
+echo "[$(date)] mm-start rc-service: $(echo "$MM_OUT" | tr '\n' ' ')" >> $LOG
+i=0
+while [ $i -lt 12 ]; do
+    if mmcli -L 2>/dev/null | grep -q "ModemManager1/Modem"; then
+        echo "[$(date)] === sim-activate end (modem via mmcli, poll ${i}) ===" >> $LOG
+        break
+    fi
+    sleep 5; i=$((i+1))
+done
+if ! mmcli -L 2>/dev/null | grep -q "ModemManager1/Modem"; then
+    echo "[$(date)] WARN: no modem via mmcli after 60s" >> $LOG
+    if pgrep -f "usr/sbin/ModemManager" >/dev/null 2>&1; then
+        echo "[$(date)]   MM process present but no modem; mmcli -L: $(mmcli -L 2>&1 | tr '\n' ' ')" >> $LOG
+    else
+        echo "[$(date)]   MM process absent" >> $LOG
+    fi
 fi
 LOCALEOF
 chmod +x ${CHROOT}/etc/local.d/sim-activate.start
