@@ -93,6 +93,11 @@ rc-update add bootmisc boot
 rc-update add mount-ro shutdown
 rc-update add killprocs shutdown
 rc-update add savecache shutdown
+# dbus + polkit MUST be in the boot runlevel: modemmanager needs polkit, and with
+# MM not auto-started (Plan B) nothing else pulls polkit in, so MM would fail
+# with "cannot start modemmanager as polkit would not start" (verified 2026-08-26).
+rc-update add dbus default
+rc-update add polkit default
 rc-update add dropbear default
 rc-update add rmtfs default
 # NOTE: ModemManager is intentionally NOT added to boot (Plan B).
