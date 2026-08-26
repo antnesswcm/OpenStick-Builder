@@ -204,23 +204,14 @@ done
 echo "[$(date)] registration wait done (${i} iters, reg=${REG:-0})" >> $LOG
 
 # 7. start MM -> auto-connect + configure IP/route/DNS
-# At boot the MM daemon dependency (dbus/polkit) may not be ready yet, and
-# rc-service start can return while MM is not actually running. Retry until
-# the ModemManager process is really up (max ~60s).
-i=0
-while [ $i -lt 12 ]; do
-    rc-service modemmanager start 2>/dev/null
-    sleep 5
-    if pgrep -f "usr/sbin/ModemManager" >/dev/null 2>&1; then
-        echo "[$(date)] MM running after retry $i" >> $LOG
-        break
-    fi
-    i=$((i+1))
-done
+# Plan A: /etc/init.d/local declares `after dbus polkit`, so this local.d
+# script runs after dbus/polkit are up and MM starts cleanly in one shot.
+rc-service modemmanager start 2>/dev/null
+sleep 5
 if pgrep -f "usr/sbin/ModemManager" >/dev/null 2>&1; then
     echo "[$(date)] === sim-activate end (MM up) ===" >> $LOG
 else
-    echo "[$(date)] WARN: MM still not running after retries" >> $LOG
+    echo "[$(date)] WARN: MM not up after one start" >> $LOG
 fi
 LOCALEOF
 chmod +x ${CHROOT}/etc/local.d/sim-activate.start
@@ -230,6 +221,13 @@ chmod +x ${CHROOT}/etc/local.d/sim-activate.start
 # in the boot runlevel, re-introducing the sim-missing power-off problem.
 sed -i 's|Exec=/usr/sbin/ModemManager|Exec=/bin/false|' \
     ${CHROOT}/usr/share/dbus-1/system-services/org.freedesktop.ModemManager1.service 2>/dev/null || true
+
+# Plan A: make /etc/init.d/local depend on dbus/polkit, so its local.d scripts
+# (sim-activate) run only after dbus+polkit are up. ModemManager (needs both)
+# then starts cleanly in a single rc-service call - no retry hammering.
+# 'after *' already exists in the local service; we add explicit dbus/polkit.
+sed -i '/^[[:space:]]*after \*/a\\tafter dbus polkit' \
+    ${CHROOT}/etc/init.d/local 2>/dev/null || true
 
 # WiFi(192.168.4.x) -> 4G(wwan0) NAT forwarding
 cat > ${CHROOT}/etc/local.d/nat.start << 'LOCALEOF'
