@@ -324,6 +324,13 @@ echo "/dev/mmcblk0p14\t/boot\text2\tdefaults\t0 2" >> ${CHROOT}/etc/fstab
 cp -a configs/templates ${CHROOT}/etc/gt
 cp scripts/setup_ncm_gadget.sh ${CHROOT}/usr/local/bin
 
+# sp970-link: modem link status/control interface (card|status|up, JSON)  [v5]
+# /usr/local/bin (canonical) + /usr/bin symlink so it is callable from the
+# default non-login PATH (dropbear exec / cron / future services).
+cp scripts/sp970-link ${CHROOT}/usr/local/bin/sp970-link
+chmod +x ${CHROOT}/usr/local/bin/sp970-link
+ln -sf /usr/local/bin/sp970-link ${CHROOT}/usr/bin/sp970-link
+
 # write firmware version identifier for quick boot-time identification
 # /etc/openstick-version: "v4.0.0 (2026-08-25, commit ff25894c1a2b...)"  [full hash for exact verification]
 # /etc/openstick-changelog.md: 随固件打包的变更日志

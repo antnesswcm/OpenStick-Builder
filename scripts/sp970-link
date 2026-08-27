@@ -1,0 +1,134 @@
+#!/bin/sh
+# sp970-link — SP970 modem link status/control interface (device-side, Alpine v4)
+# Usage: sp970-link {card|status|up}
+# Output: one-line JSON (machine-readable).
+#
+# Stable parsing (已按实测格式校准):
+#   - mmcli -m any -K   : "key : value" 无 ANSI; 用 sed 取 modem.generic.state 等
+#   - ip -o addr show   : oneline, 稳定; 取 inet
+#   - qmicli            : --uim-get-card-status 本身无 ANSI (strip 仅兜底)
+#   - pgrep MM          : grep -v pgrep 排除自身匹配 (坑#2.5)
+#
+# 坑规避: qmicli -p (MM 在跑) / -d (MM 停) 自适应 (坑#2);
+#         绝不 ip link set wwan0 up (坑#3); up 复用 sim-activate.start (已验证);
+#         状态锚定 modem.generic.state 排除 power/packet service state。
+
+QMI_DEV=/dev/wwan0qmi0
+BDMUX=/sys/devices/platform/soc/4080000.remoteproc/4080000.remoteproc:bam-dmux/power/runtime_status
+PING_TARGET=223.5.5.5
+SIM_ACT=/etc/local.d/sim-activate.start
+QMI=$(command -v qmicli || echo /usr/bin/qmicli)
+
+# ---- helpers ----
+# MM 在跑? (pgrep -f 会自匹配 pgrep 自身, 用 grep -v pgrep 排除; 也匹配 supervise-daemon, 即 MM 系统在跑)
+mm_running() { pgrep -f '/usr/sbin/ModemManager' 2>/dev/null | grep -v pgrep >/dev/null 2>&1; }
+
+# qmicli 自适应: MM 在跑 -p (proxy 避免抢通道 坑#2), 否则 -d 直连
+qmi() {
+    if mm_running; then sudo -n "$QMI" -p -d "$QMI_DEV" "$@"; else sudo -n "$QMI" -d "$QMI_DEV" "$@"; fi
+}
+strip_ansi() { sed 's/.\[[0-9;]*m//g'; }
+
+# ---- card ----
+# 全局: CARD_SLOT1, CARD_USIM, CARD_STATE
+collect_card() {
+    out=$(qmi --uim-get-card-status 2>&1 | strip_ansi)
+    if echo "$out" | grep -q "Card state: 'present'"; then
+        CARD_SLOT1=present
+        # usim 的 application state: "Application type: usim" 的下一行 (busybox awk 不稳, 用 sed n)
+        CARD_USIM=$(echo "$out" | sed -n "/Application type:.*usim/{n;p}" | sed -n "s/.*Application state: '\([a-z-]*\)'.*/\1/p")
+        [ -z "$CARD_USIM" ] && CARD_USIM=unknown
+    else
+        # 拔卡后: slot1 = "error: possibly-removed (6)" 等, 非 present
+        CARD_SLOT1=$(echo "$out" | sed -n "s/.*Card state: '\([^']*\)'.*/\1/p" | head -1)
+        [ -z "$CARD_SLOT1" ] && CARD_SLOT1=unknown
+        CARD_USIM=none
+    fi
+    if [ "$CARD_SLOT1" = present ]; then
+        if [ "$CARD_USIM" = ready ]; then CARD_STATE=present-ready
+        else CARD_STATE=present-detected; fi
+    else
+        CARD_STATE=absent
+    fi
+}
+
+# ---- status ----
+# 全局: CARD, MM_RUNNING, MM_STATE, NAS, WWAN_IP, DR, PING_OK, BDMUX_V, LINK, MM_SIGNAL, MM_OP
+collect_status() {
+    collect_card
+    CARD=$CARD_STATE
+    if mm_running; then
+        MM_RUNNING=true
+        mmk=$(mmcli -m any -K 2>/dev/null)
+        MM_STATE=$(echo "$mmk" | sed -n 's/^modem\.generic\.state[[:space:]]*:[[:space:]]*\(.*\)$/\1/p' | head -1)
+        [ -z "$MM_STATE" ] && MM_STATE=unknown
+        MM_SIGNAL=$(echo "$mmk" | sed -n 's/^modem\.generic\.signal-quality\.value[[:space:]]*:[[:space:]]*\(.*\)$/\1/p' | head -1)
+        MM_OP=$(echo "$mmk" | sed -n 's/^modem\.3gpp\.operator-name[[:space:]]*:[[:space:]]*\(.*\)$/\1/p' | head -1)
+    else
+        MM_RUNNING=false; MM_STATE=stopped; MM_SIGNAL=na; MM_OP=na
+    fi
+    NAS=$(qmi --nas-get-serving-system 2>&1 | strip_ansi | grep -q "Registration state: 'registered'" && echo registered || echo not-registered)
+    WWAN_IP=$(/sbin/ip -o addr show wwan0 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)
+    [ -z "$WWAN_IP" ] && WWAN_IP=none
+    DR=$(/sbin/ip route 2>/dev/null | grep -m1 'default via.*wwan0' | sed -n 's/.*via \([0-9.]*\).*/\1/p')
+    [ -z "$DR" ] && DR=none
+    BDMUX_V=unknown; [ -r "$BDMUX" ] && BDMUX_V=$(cat "$BDMUX" 2>/dev/null)
+    PING_OK=$(/bin/ping -c1 -W1 "$PING_TARGET" 2>/dev/null | grep -q '0% packet loss' && echo yes || echo no)
+    # link_state 优先级 (5 态, 用 "MM 是否在跑" 区分 还没拉起 vs 已down, 无需历史)
+    if [ "$CARD" = absent ]; then
+        LINK=no-card
+    elif [ "$MM_STATE" = connected ] && [ "$WWAN_IP" != none ]; then
+        LINK=up
+    elif [ "$MM_RUNNING" = false ]; then
+        LINK=card-no-net
+    else
+        LINK=net-down
+    fi
+}
+
+cmd_card() {
+    collect_card
+    printf '{"state":"%s","slot1":"%s","usim":"%s"}\n' "$CARD_STATE" "$CARD_SLOT1" "$CARD_USIM"
+}
+
+cmd_status() {
+    collect_status
+    printf '{"link_state":"%s","card":"%s","mm_running":%s,"mm_state":"%s","signal":"%s","operator":"%s","nas":"%s","wwan_ip":"%s","default_route":"%s","ping":"%s","bdmux":"%s"}\n' \
+        "$LINK" "$CARD" "$MM_RUNNING" "$MM_STATE" "$MM_SIGNAL" "$MM_OP" "$NAS" "$WWAN_IP" "$DR" "$PING_OK" "$BDMUX_V"
+}
+
+cmd_up() {
+    t0=$(date +%s)
+    # 1. 停 MM (干净, 让 sim-activate 的 -d 不争用)
+    sudo -n rc-service modemmanager stop >/dev/null 2>&1
+    sudo -n pkill -9 -f '/usr/sbin/ModemManager' >/dev/null 2>&1
+    sleep 2
+    # 2. 若卡 not present -> power-cycle 重见 (Test2 验证, 免 remoteproc)
+    METHOD=sim-activate
+    collect_card
+    if [ "$CARD_SLOT1" != present ]; then
+        sudo -n "$QMI" -d "$QMI_DEV" --uim-sim-power-off=1 >/dev/null 2>&1; sleep 1
+        sudo -n "$QMI" -d "$QMI_DEV" --uim-sim-power-on=1 >/dev/null 2>&1; sleep 2
+        METHOD=powercycle+sim-activate
+        collect_card
+        if [ "$CARD_SLOT1" != present ]; then
+            t1=$(date +%s)
+            printf '{"ok":false,"error":"no card after power-cycle","link_state":"no-card","method":"%s","duration_s":%s}\n' "$METHOD" "$((t1-t0))"
+            return 1
+        fi
+    fi
+    # 3. 跑 sim-activate (provision->ready + CFUN + reg + 起 MM), 全程不 remoteproc 重启
+    sudo -n sh "$SIM_ACT" >/dev/null 2>&1
+    # 4. probe
+    collect_status
+    t1=$(date +%s)
+    ok=false; [ "$LINK" = up ] && ok=true
+    printf '{"ok":%s,"link_state":"%s","method":"%s","duration_s":%s}\n' "$ok" "$LINK" "$METHOD" "$((t1-t0))"
+}
+
+case "${1:-}" in
+    card)   cmd_card ;;
+    status) cmd_status ;;
+    up)     cmd_up ;;
+    *) echo "usage: $0 {card|status|up}" >&2; exit 2 ;;
+esac

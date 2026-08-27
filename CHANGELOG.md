@@ -2,6 +2,20 @@
 
 版本号来源：仓库根 `VERSION` 文件。每次功能变更递增，构建时写入固件 `/etc/openstick-version` + `/etc/openstick-changelog.md`。
 
+## [5.0.0] - 2026-08-27（待构建）
+
+### 新增
+- **`sp970-link` 链路接口（设备端 CLI）**：`/usr/local/bin/sp970-link`（+ `/usr/bin` 符号链接进非登录 PATH）。三个子命令，JSON 输出：
+  - `sp970-link card`：卡状态（`present-ready`/`present-detected`/`absent`）
+  - `sp970-link status`：链路状态机 5 态（`up`/`card-no-net`/`no-card`/`net-down`）+ 全字段（card/mm_running/mm_state/nas/wwan_ip/route/ping/bdmux）
+  - `sp970-link up`：拉起——停 MM →（卡不在则 `uim-sim-power-off`+`on` 重见卡，免 remoteproc 重启）→ `sim-activate.start` → 返回 `{ok,link_state,method,duration_s}`
+  - 稳定解析：`mmcli -K`（key=value 无 ANSI）+ `ip -o` + qmicli 去 ANSI + 锚定正则；规避坑#2/#3/#2.5。
+- **热插拔研究结论（固化）**：拔卡→`searching`/`possibly-removed`/wwan0 保留(丢IP)/bearer 未拆/bam-dmux 不锁；插回→modem **不主动检测**（sim 全程 `possibly-removed`，不自愈）；最小热恢复=`uim-sim-power-off`+`on` 重见卡 + sim-activate 流程，~40-44s，**免 remoteproc 重启**（推翻 v4 时期"必须 remoteproc 重启"的旧结论）。
+
+### 变更
+- **DTS sim-sel 修正**：`sim_select`(gpio26, ACTIVE_LOW) → `sim-sel`(gpio114, ACTIVE_HIGH, off→boot 驱动 LOW)。gpio114 LOW=**物理 SIM**（与 q410 `msm8916-gexing-sp970.dts` 验证过的配置逐字一致；`切卡研究资料.txt` V13 的"0=eSIM"不适用本板）。modem/bam-dmux/wwan 拓扑不变（SoC 级，overlay 未碰），`sp970-link`/`sim-activate` 硬编码路径不受影响。
+- `sp970-link` 不开机自启（按需调用）；boot 仍走 `sim-activate.start`（已验证开箱即用）。boot 可选末尾追加 `sp970-link status` 日志（v5 暂未加）。
+
 ## [4.0.0] - 2026-08-26（待构建）
 
 ### 新增
