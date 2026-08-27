@@ -261,6 +261,34 @@ iptables -t nat -C POSTROUTING -o wwan0 -j MASQUERADE 2>/dev/null || \
 LOCALEOF
 chmod +x ${CHROOT}/etc/local.d/nat.start
 
+# LED daemon (first version: one-shot, shell, zero deps)  [v5]
+# local.d runs *.start in alphabetical (glob) order: led-daemon < nat < sim-activate,
+# so this runs FIRST. That is fine: it only sets LED triggers (red off, green
+# heartbeat) and waits for sysfs; it does not depend on sim-activate. The visual
+# effect is: red heartbeat (DTS) -> green heartbeat (this) early in boot, before
+# networking is fully up. Acceptable for v1.
+cat > ${CHROOT}/etc/local.d/led-daemon.start << 'LOCALEOF'
+#!/bin/sh
+# SP970 LED daemon v1: red heartbeat -> green heartbeat on system up
+# (blue phy0tx kept from DTS; red off after boot settles)
+R=/sys/class/leds/red:os
+G=/sys/class/leds/green:4g
+# wait for sysfs
+i=0
+while [ $i -lt 50 ]; do
+    [ -e "$R/trigger" ] && [ -e "$G/trigger" ] && break
+    sleep 0.2
+    i=$((i+1))
+done
+# red: disable heartbeat, turn off
+echo none > "$R/trigger" 2>/dev/null
+echo 0 > "$R/brightness" 2>/dev/null
+# green: take over heartbeat
+echo heartbeat > "$G/trigger" 2>/dev/null
+# blue: phy0tx kept (DTS), untouched
+LOCALEOF
+chmod +x ${CHROOT}/etc/local.d/led-daemon.start
+
 echo 'user ALL=(ALL:ALL) NOPASSWD: ALL' > ${CHROOT}/etc/sudoers.d/user
 
 # add udev rules

@@ -5,6 +5,7 @@
 ## [5.0.0] - 2026-08-27（待构建）
 
 ### 新增
+- **LED 状态指示（DTS + 守护进程）**：DTS 设 `red:os`=heartbeat(on) + `blue:wifi`=phy0tx(off) + `green:4g`=off；`led-daemon.start`（local.d，shell 一次性脚本，零依赖）开机接管：红色心跳关掉 → 绿色接管 heartbeat（蓝 phy0tx 保持）。视觉：上电红心跳 → 系统起后绿心跳。
 - **`sp970-link` 链路接口（设备端 CLI）**：`/usr/local/bin/sp970-link`（+ `/usr/bin` 符号链接进非登录 PATH）。三个子命令，JSON 输出：
   - `sp970-link card`：卡状态（`present-ready`/`present-detected`/`absent`）
   - `sp970-link status`：链路状态机 5 态（`up`/`card-no-net`/`no-card`/`net-down`）+ 全字段（card/mm_running/mm_state/nas/wwan_ip/route/ping/bdmux）
